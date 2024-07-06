@@ -438,16 +438,16 @@ static void test_case_custom(std::string input_file)
     printTensor(t_quant_input, "t_quant_input");
     #endif
 
-    // Create graph for given model
+    ggml_set_param(ctx, t_quant_input);
+    
+    /* Create graph and execute ggml graph in Q8_0 flow*/
     struct ggml_tensor * act_1 = ggml_relu(ctx, t_quant_input);
-    create_and_execute_ggml_sub_graph(act_1, ctx, "act_1");
     struct ggml_tensor * matMul_1 = ggml_gemm(ctx, act_1, t_matmul_1);
-    create_and_execute_ggml_sub_graph(matMul_1, ctx, "matMul_1");
     struct ggml_tensor * act_2  = ggml_relu(ctx, matMul_1);
-    create_and_execute_ggml_sub_graph(act_2, ctx, "act_2");
     struct ggml_tensor * matMul_2 = ggml_gemm(ctx, act_2, t_matmul_2);
-    create_and_execute_ggml_sub_graph(matMul_2, ctx, "matMul_2");
     struct ggml_tensor * output_tensor  = ggml_relu(ctx, matMul_2);
+
+
     create_and_execute_ggml_sub_graph(output_tensor, ctx, "output_tensor");
 
     /*
@@ -479,14 +479,11 @@ static void test_case_custom(std::string input_file)
     */
 
     struct ggml_tensor * F_act_1 = ggml_relu(ctx, t_float_input);
-    create_and_execute_ggml_sub_graph(F_act_1, ctx, "F_act_1");
     struct ggml_tensor * F_matMul_1 = ggml_gemm(ctx, F_act_1, extracted_tensors["matmul1.weight"]);
-    create_and_execute_ggml_sub_graph(F_matMul_1, ctx, "F_matMul_1");
     struct ggml_tensor * F_act_2  = ggml_relu(ctx, F_matMul_1);
-    create_and_execute_ggml_sub_graph(F_act_2, ctx, "F_act_2");
     struct ggml_tensor * F_matMul_2 = ggml_gemm(ctx, F_act_2, extracted_tensors["matmul2.weight"]);
-    create_and_execute_ggml_sub_graph(F_matMul_2, ctx, "F_matMul_2");
     struct ggml_tensor * F_output_tensor  = ggml_relu(ctx, F_matMul_2);
+    
     create_and_execute_ggml_sub_graph(F_output_tensor, ctx, "F_output_tensor");
 
     quantize_q8_0(static_cast<const float*>(F_output_tensor->data), ptr_t_quant_output, F_output_tensor->ne[1], F_output_tensor->ne[0], nullptr);

@@ -2696,7 +2696,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "CROSS_ENTROPY_LOSS_BACK",
 };
 
-static_assert(GGML_OP_COUNT == 74, "GGML_OP_COUNT != 74");
+static_assert(GGML_OP_COUNT == 75, "GGML_OP_COUNT != 75");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -2784,7 +2784,7 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "cross_entropy_loss_back(x,y)",
 };
 
-static_assert(GGML_OP_COUNT == 74, "GGML_OP_COUNT != 74");
+static_assert(GGML_OP_COUNT == 75, "GGML_OP_COUNT != 75");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -5299,10 +5299,21 @@ struct ggml_tensor * ggml_mul_mat(
     return result;
 }
 
-static struct ggml_tensor * ggml_gemm_F32( struct ggml_context * ctx, struct ggml_tensor * a, struct ggml_tensor * b, int64_t ne[GGML_MAX_DIMS], int64_t M, int64_t N, int64_t K) 
+static void ggml_gemm_F32(const struct ggml_tensor * a, const struct ggml_tensor * b, struct ggml_tensor * c) 
 {
-    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, GGML_MAX_DIMS, ne);
+    int64_t M = a->ne[1];
+    int64_t N = b->ne[0];
+    int64_t K = a->ne[0];
 
+    // Determine the dimensions of the result tensor
+    int64_t ne[GGML_MAX_DIMS];
+    for (int i = 2; i < GGML_MAX_DIMS; i++) {
+        ne[i] = (a->ne[i] > 1) ? a->ne[i] : ((b->ne[i] > 1) ? b->ne[i] : 1);
+        GGML_ASSERT(a->ne[i] == 1 || b->ne[i] == 1 || a->ne[i] == b->ne[i]);
+    }
+    ne[0] = N;
+    ne[1] = M;
+    
     // Handle 2D, 3D, and 4D tensors
     int64_t n = 1;
     for (int i = 2; i < GGML_MAX_DIMS; i++) {
@@ -5311,7 +5322,7 @@ static struct ggml_tensor * ggml_gemm_F32( struct ggml_context * ctx, struct ggm
 
     float *a_data = (float *)a->data;
     float *b_data = (float *)b->data;
-    float *result_data = (float *)result->data;
+    float *result_data = (float *)c->data;
 
     for (int idx = 0; idx < n; idx++) {
         int64_t offset_a = idx * M * K;
@@ -5328,12 +5339,22 @@ static struct ggml_tensor * ggml_gemm_F32( struct ggml_context * ctx, struct ggm
             }
         }
     }
-    return result;
 }
 
-static struct ggml_tensor * ggml_gemm_Q8_0( struct ggml_context * ctx, struct ggml_tensor * a, struct ggml_tensor * b, int64_t ne[GGML_MAX_DIMS], int64_t M, int64_t N, int64_t K) 
+static void ggml_gemm_Q8_0(const struct ggml_tensor * a, const struct ggml_tensor * b, struct ggml_tensor * c) 
 {
-    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_Q8_0, GGML_MAX_DIMS, ne);
+    int64_t M = a->ne[1];
+    int64_t N = b->ne[0];
+    int64_t K = a->ne[0];
+
+    // Determine the dimensions of the result tensor
+    int64_t ne[GGML_MAX_DIMS];
+    for (int i = 2; i < GGML_MAX_DIMS; i++) {
+        ne[i] = (a->ne[i] > 1) ? a->ne[i] : ((b->ne[i] > 1) ? b->ne[i] : 1);
+        GGML_ASSERT(a->ne[i] == 1 || b->ne[i] == 1 || a->ne[i] == b->ne[i]);
+    }
+    ne[0] = N;
+    ne[1] = M;
 
     // Handle 2D, 3D, and 4D tensors
     int64_t n = 1;
@@ -5343,7 +5364,7 @@ static struct ggml_tensor * ggml_gemm_Q8_0( struct ggml_context * ctx, struct gg
 
     int8_t *a_data = (int8_t *)a->data;
     int8_t *b_data = (int8_t *)b->data;
-    int8_t *result_data = (int8_t *)result->data;
+    int8_t *result_data = (int8_t *)c->data;
 
     for (int idx = 0; idx < n; idx++) {
         int64_t offset_a = idx * M * K;
@@ -5361,7 +5382,6 @@ static struct ggml_tensor * ggml_gemm_Q8_0( struct ggml_context * ctx, struct gg
             }
         }
     }
-    return result;
 }
 
 // custom layer gemm implementation
@@ -5386,13 +5406,29 @@ struct ggml_tensor * ggml_gemm( struct ggml_context * ctx, struct ggml_tensor * 
     ne[0] = N;
     ne[1] = M;
 
+    bool is_node = false;
+
+    if (a->grad || b->grad) {
+        is_node = true;
+    }
+
+    struct ggml_tensor * result;
+
     if(a->type == GGML_TYPE_F32)
     {
-        return ggml_gemm_F32(ctx, a, b, ne, M, N, K);
+        result = ggml_new_tensor(ctx, GGML_TYPE_F32, GGML_MAX_DIMS, ne);
     }
-    
-    printf("Here\n");
-    return ggml_gemm_Q8_0(ctx, a, b, ne, M, N, K);
+    else
+    {
+        result = ggml_new_tensor(ctx, GGML_TYPE_Q8_0, GGML_MAX_DIMS, ne);
+    }
+
+    result->op   = GGML_OP_GEMM;
+    result->grad = is_node ? ggml_dup_tensor(ctx, result) : NULL;
+    result->src[0] = a;
+    result->src[1] = b;
+
+    return result;
 }
 
 
@@ -12250,6 +12286,26 @@ static void ggml_compute_forward_mul_mat_one_chunk(
     }
 }
 
+static void ggml_compute_forward_gemm(
+        const struct ggml_compute_params * params,
+              struct ggml_tensor * dst) {
+
+    const struct ggml_tensor * a = dst->src[0];
+    const struct ggml_tensor * b = dst->src[1];
+    struct ggml_tensor * c = dst;
+
+    if(a->type == GGML_TYPE_F32)
+    {
+        ggml_gemm_F32(a, b, c);
+    }
+    else
+    {
+        ggml_gemm_Q8_0(a, b, c);
+    }
+
+    return;
+}
+
 static void ggml_compute_forward_mul_mat(
         const struct ggml_compute_params * params,
               struct ggml_tensor * dst) {
@@ -16951,6 +17007,10 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
             {
                 GGML_ASSERT(false);
             } break;
+        case GGML_OP_GEMM:
+            {
+                ggml_compute_forward_gemm(params, tensor);
+            } break;
     }
 }
 
@@ -18476,6 +18536,7 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
         case GGML_OP_GROUP_NORM:
         case GGML_OP_CONCAT:
         case GGML_OP_MUL_MAT:
+        case GGML_OP_GEMM:
         case GGML_OP_MUL_MAT_ID:
         case GGML_OP_OUT_PROD:
             {
